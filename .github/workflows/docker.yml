@@ -1,12 +1,3 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# GitHub recommends pinning actions to a commit SHA.
-# To get a newer version, you will need to update the SHA.
-# You can also reference a tag or branch, but the action may change without warning.
-
 name: Publish Docker Image
 
 on:
@@ -24,7 +15,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: arthurferroni/approachti-quepasa
+  IMAGE_NAME: codeleaks/quepasa
   NODE_ENV: production
   APP_ENV: production
   QUEPASA_CONTAINER_NAME: "quepasa"
@@ -40,16 +31,16 @@ env:
 
 jobs:
   push_to_registry:
-    name: Push Docker + GitHub Release
+    name: Push Docker + GitHub Release (condicional)
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the repo
+      - name: Check out the repo (full history)
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
       # 1) Build & push apenas com `latest`
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v3
         with:
@@ -59,7 +50,6 @@ jobs:
           tags: |
             type=ref,event=tag
             type=schedule
-            # marca latest em pushes na main
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
           flavor: |
             latest=true
@@ -80,28 +70,38 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # 2) Se for push na main, extrai versão, cria tag e Release
-      - name: Extract QpVersion
+      # 2) Só prossiga se for push na main
+      - name: Extract old QpVersion
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: extract_version
+        id: extract_old
         run: |
-          VERSION=$(grep -Po '(?<=const QpVersion = ")[^"]+' src/models/qp_defaults.go)
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          OLD=$(git show HEAD~1:src/models/qp_defaults.go \
+            | grep -Po '(?<=const QpVersion = ")[^"]+')
+          echo "old=$OLD" >> $GITHUB_OUTPUT
 
-      - name: Configure Git for tagging
+      - name: Extract new QpVersion
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: extract_new
+        run: |
+          NEW=$(grep -Po '(?<=const QpVersion = ")[^"]+' src/models/qp_defaults.go)
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "VERSION=$NEW" >> $GITHUB_ENV
+
+      # 3) Se QpVersion mudou, crie tag, Release e tagueie a imagem
+      - name: Configure Git for tagging
+        if: ${{ steps.extract_old.outputs.old != steps.extract_new.outputs.new }}
         run: |
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
-      - name: Create & push Git tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Create & push Git tag ${{ env.VERSION }}
+        if: ${{ steps.extract_old.outputs.old != steps.extract_new.outputs.new }}
         run: |
           git tag -a "${{ env.VERSION }}" -m "Release ${{ env.VERSION }}"
           git push origin "${{ env.VERSION }}"
 
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Create GitHub Release ${{ env.VERSION }}
+        if: ${{ steps.extract_old.outputs.old != steps.extract_new.outputs.new }}
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -111,9 +111,8 @@ jobs:
             📦 Imagem Docker `${{ env.IMAGE_NAME }}:${{ env.VERSION }}` publicada!
             Commit: ${{ github.sha }}
 
-      # 3) Re-build & push com tags `latest` + `<qpversion>`
-      - name: Build and push Docker image with version tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Build & push Docker image with version tag
+        if: ${{ steps.extract_old.outputs.old != steps.extract_new.outputs.new }}
         uses: docker/build-push-action@v4.1.0
         with:
           context: .
