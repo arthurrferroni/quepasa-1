@@ -20,12 +20,11 @@ on:
       - v*
 
 permissions:
-  contents: write    # necessário para criar tags e releases
+  contents: write    # para criar tags e releases
 
 env:
   REGISTRY: docker.io
   IMAGE_NAME: arthurferroni/approachti-quepasa
-  GIT_REF: ${{ github.head_ref || github.ref_name }}
   NODE_ENV: production
   APP_ENV: production
   QUEPASA_CONTAINER_NAME: "quepasa"
@@ -41,7 +40,7 @@ env:
 
 jobs:
   push_to_registry:
-    name: Push Docker image to Docker Hub & Create GitHub Release
+    name: Push Docker + GitHub Release
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
@@ -49,6 +48,7 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 1) Build & push apenas com `latest`
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v3
@@ -59,10 +59,8 @@ jobs:
           tags: |
             type=ref,event=tag
             type=schedule
+            # marca latest em pushes na main
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
           flavor: |
             latest=true
 
@@ -72,7 +70,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (latest)
         uses: docker/build-push-action@v4.1.0
         with:
           context: .
@@ -82,8 +80,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # ========== daqui pra baixo é novo ==========
-      - name: Extract QpVersion from src/models/qp_defaults.go
+      # 2) Se for push na main, extrai versão, cria tag e Release
+      - name: Extract QpVersion
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: extract_version
         run: |
@@ -96,15 +94,32 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
-      - name: Create & push Git tag ${{ env.VERSION }}
+      - name: Create & push Git tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git tag -a "${{ env.VERSION }}" -m "Release ${{ env.VERSION }}"
           git push origin "${{ env.VERSION }}"
 
-      - name: Create GitHub Release ${{ env.VERSION }}
+      - name: Create GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.VERSION }}
           name: "Release ${{ env.VERSION }}"
+          body: |
+            📦 Imagem Docker `${{ env.IMAGE_NAME }}:${{ env.VERSION }}` publicada!
+            Commit: ${{ github.sha }}
+
+      # 3) Re-build & push com tags `latest` + `<qpversion>`
+      - name: Build and push Docker image with version tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v4.1.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
