@@ -20,7 +20,7 @@ on:
       - v*
 
 permissions:
-  contents: write    # para poder criar tags e releases
+  contents: write    # necessário para criar tags e releases
 
 env:
   REGISTRY: docker.io
@@ -41,7 +41,7 @@ env:
 
 jobs:
   push_to_registry:
-    name: Push Docker image to Docker Hub & GitHub Release
+    name: Push Docker image to Docker Hub & Create GitHub Release
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
@@ -82,8 +82,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # === Só prossiga a partir daqui se for push em main ===
-      - name: Extract QpVersion from code
+      # ========== daqui pra baixo é novo ==========
+      - name: Extract QpVersion from src/models/qp_defaults.go
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: extract_version
         run: |
@@ -102,15 +102,9 @@ jobs:
           git tag -a "${{ env.VERSION }}" -m "Release ${{ env.VERSION }}"
           git push origin "${{ env.VERSION }}"
 
-      - name: Create GitHub Release for ${{ env.VERSION }}
+      - name: Create GitHub Release ${{ env.VERSION }}
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: peter-evans/create-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.VERSION }}
-          release_name: "Release ${{ env.VERSION }}"
-          body: |
-            📦 Imagem Docker publicada: `${{ env.IMAGE_NAME }}:${{ env.VERSION }}`
-            Commit: ${{ github.sha }}
-          draft: false
-          prerelease: false
+          name: "Release ${{ env.VERSION }}"
